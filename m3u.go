@@ -30,6 +30,7 @@ type Track struct {
 	Length int
 	URI    string
 	Tags   []Tag
+	Group  string
 }
 
 // Parse parses an m3u playlist with the given file name and returns a Playlist
@@ -69,12 +70,12 @@ func Parse(fileName string) (playlist Playlist, err error) {
 				err = errors.New("Invalid m3u file format. Expected EXTINF metadata to contain track length and name data")
 				return
 			}
-			length, parseErr := strconv.Atoi(strings.Split(trackInfo[0], " ")[0])
+			length, parseErr := strconv.Atoi(strings.Split(strings.TrimSpace(trackInfo[0]), " ")[0])
 			if parseErr != nil {
 				err = errors.New("Unable to parse length")
 				return
 			}
-			track := &Track{strings.Trim(trackInfo[1], " "), length, "", nil}
+			track := &Track{strings.Trim(trackInfo[1], " "), length, "", nil, ""}
 			tagList := tagsRegExp.FindAllString(line, -1)
 			for i := range tagList {
 				tagInfo := strings.Split(tagList[i], "=")
@@ -82,6 +83,9 @@ func Parse(fileName string) (playlist Playlist, err error) {
 				track.Tags = append(track.Tags, *tag)
 			}
 			playlist.Tracks = append(playlist.Tracks, *track)
+		} else if strings.HasPrefix(line, "#EXTGRP") {
+			line := strings.Replace(line, "#EXTGRP:", "", -1)
+			playlist.Tracks[len(playlist.Tracks)-1].Group = line
 		} else if strings.HasPrefix(line, "#") || line == "" {
 			continue
 		} else if len(playlist.Tracks) == 0 {
@@ -99,7 +103,7 @@ func Parse(fileName string) (playlist Playlist, err error) {
 func Marshall(p Playlist) (io.Reader, error) {
 	buf := new(bytes.Buffer)
 	w := bufio.NewWriter(buf)
-	if err := MarshallInto(p, w); err != nil {
+	if err := MarshallInto(p, w,true); err != nil {
 		return nil, err
 	}
 
@@ -107,8 +111,10 @@ func Marshall(p Playlist) (io.Reader, error) {
 }
 
 // MarshallInto a *bufio.Writer a Playlist.
-func MarshallInto(p Playlist, into *bufio.Writer) error {
-	into.WriteString("#EXTM3U\n")
+func MarshallInto(p Playlist, into *bufio.Writer, writeHeader bool) error {
+	if writeHeader {
+		into.WriteString("#EXTM3U\n")
+	}
 	for _, track := range p.Tracks {
 		into.WriteString("#EXTINF:")
 		into.WriteString(fmt.Sprintf("%d ", track.Length))
@@ -120,8 +126,11 @@ func MarshallInto(p Playlist, into *bufio.Writer) error {
 			into.WriteString(fmt.Sprintf("%s=%q ", track.Tags[i].Name, track.Tags[i].Value))
 		}
 		into.WriteString(", ")
-
-		into.WriteString(fmt.Sprintf("%s\n%s\n", track.Name, track.URI))
+		if track.Group != "" {
+			into.WriteString(fmt.Sprintf("%s\n#EXTGRP:%s\n%s\n", track.Name, track.Group, track.URI))
+		}else{
+			into.WriteString(fmt.Sprintf("%s\n%s\n", track.Name, track.URI))
+		}
 	}
 
 	return into.Flush()
